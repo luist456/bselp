@@ -1,175 +1,51 @@
-%% Question 2.1: Replication Using Standard Local Projections
+%% Question 2: A toy example
 
-% --- Other variables ---
+H = 10; % Number of horizons
 
-% --- Common inputs ---
-p_y = 12; % Maximum number of lags for depedent variable
-p_x = 12; % Maxiimum number of lags for other controls
-H =  25; % Maximum number of horizons
-hStart = 0;
-c = 0;
-R_pos = [1,1]; % Linear combination for positive shock
-R_neg = [1,0]; % Linear combination for negative shock
+betas = nan(H+1,1); % To store shock coefficients
+ses   = nan(H+1,1); % To store corresponding standard deviations
 
+T = length(RealRate); % Number of observations
 
-for v = 1:length(LHSlabels) % Loop over all variables
+for h = 0:H % Loop over horizons
+ 
+    t0 = 2;
+    t1 = T - h;
 
-    Y_LABEL = LHSlabels(v);   
-    Yname   = Y_LABEL{:};     
-    disp(['Making LP for: ', Yname]) % Pick the name of the current variable
+    Y = RealRate((t0+h):(t1+h)) - RealRate((t0-1):(t1-1)); % Long differences of 
+    % dependent variable
 
-    [YY, X] = make_regressors_func(Z,Y_LABEL,p_y,p_x); % Extract regressor matrix
+    X = [ones(length(Y),1), rr_shock(t0:t1)]; % Matrix of regressors: constant + 
+    % shock
 
-    res_pos = lp_ols_interaction(YY, X, shock_array, H, hStart, "cum", c, R_pos);
-    res_neg = lp_ols_interaction(YY, X, shock_array, H, hStart, "cum", c, R_neg);
+    % OLS
+    b = (X' * X) \ (X' * Y); % Coefficients 
+    res = Y - X*b; % Residuals
 
-    LPcoeffsAsy_LHS.("pos").("beta").(Yname) = res_pos.irf .* w; % Store 
-    % shocks coefficients (+)
-    LPcoeffsAsy_LHS.("pos").("se").(Yname)  = res_pos.se_irf .* w; % Store
-    % corresponding standard errors (+)
+    n = size(X,1);
+    k = size(X,2);
+    s2 = (res' * res) / (n - k);
+    V  = s2 * inv(X' * X);
 
-    LPcoeffsAsy_LHS.("neg").("beta").(Yname) = res_neg.irf .* w; % Store 
-    % shocks coefficients (-)
-    LPcoeffsAsy_LHS.("neg").("se").(Yname)  = res_neg.se_irf .* w; % Store
-    % corresponding standard errors (-)
-    
+    betas(h+1) = b(2); % Pick second coefficient (first is the constant)
+    ses(h+1)   = sqrt(V(2,2)); % Same here
 end
 
-disp('--------- Done estimating asymmetric LPs ---------')
+hgrid = (0:H)';
+
+% 68% bands: +/- 1 * se
+upper68 = betas + ses;
+lower68 = betas - ses;
+
+% Final plot
+figure;
+plot(hgrid, betas, '-o'); hold on; grid on;
+ci_color = [0.5 0.5 0.5];   % grey (RGB)
+plot(hgrid, upper68, '--', 'Color', ci_color, 'LineWidth', 1.2);
+plot(hgrid, lower68, '--', 'Color', ci_color, 'LineWidth', 1.2);
+yline(0, '-');
+xlabel('Horizon h');
+ylabel('\beta_h');
+title('Local Projection: rr_{t+h} - rr_{t-1} on shock_t (const + shock)');
 
 
-% --- Plots ---
-
-irf_posStruct = LPcoeffsAsy_LHS.("pos").("beta");
-se_posStruct   = LPcoeffsAsy_LHS.("pos").("se");
-
-
-irf_negStruct = LPcoeffsAsy_LHS.("neg").("beta");
-se_negStruct   = LPcoeffsAsy_LHS.("neg").("se");
-
-z = 1;   % 68% CI
-
-for i = 1:numel(LHSlabels)
-    
-    v = LHSlabels{i};
-    
-    irf_pos = irf_posStruct.(v);   % H x 1
-    se_pos  = se_posStruct.(v);     % H x 1
-
-    irf_neg = - irf_negStruct.(v);   % H x 1 flipped sign for comparison
-    se_neg  = se_negStruct.(v);     % H x 1
-    
-    H = size(irf_pos,1);
-    h = (0:H-1)';
-
-    % 68% confidence bands
-    lo_pos = irf_pos - z*se_pos;
-    hi_pos = irf_pos + z*se_pos;
-    lo_neg = irf_neg - z*se_neg;
-    hi_neg = irf_neg + z*se_neg;
-
-    figure('Color','w'); hold on; box on;
-
-   
-    c_neg = [0 0.447 0.741];      % blue  -> negative shock
-    c_pos = [0.850 0.325 0.098];  % red   -> positive shock
-
-    % CI areas 
-    fill([h; flipud(h)], [lo_pos; flipud(hi_pos)], c_pos, ...
-        'FaceAlpha',0.2,'EdgeColor','none','HandleVisibility','off');
-    fill([h; flipud(h)], [lo_neg; flipud(hi_neg)], c_neg, ...
-        'FaceAlpha',0.2,'EdgeColor','none','HandleVisibility','off');
-
-    % IRFs 
-    p1 = plot(h, irf_pos, 'LineWidth',2, 'Color',c_pos);
-    p2 = plot(h, irf_neg, 'LineWidth',2, 'Color',c_neg);
-
-    yline(0,'k','LineWidth',1,'HandleVisibility','off');
-
-    title(v,'Interpreter','none');
-    xlabel('Horizon');
-    ylabel('Response');
-
-    legend([p1 p2], {'IRF (+)','IRF (-)'}, 'Location','best');
-
-    grid on;
-end
-
-
-%% Question 2.2: Replication Using Standard Local Projections
-
-% --- Common inputs ---
-p_y = 12; % Maximum number of lags for depedent variable
-p_x = 12; % Maxiimum number of lags for other controls
-H =  25; % Maximum number of horizons
-hStart = 0;
-c = 0;
-R_diff = [0,1]; % Linear combination for difference
-
-
-for v = 1:length(LHSlabels) % Loop over all variables
-
-    Y_LABEL = LHSlabels(v);   
-    Yname   = Y_LABEL{:};     
-    disp(['Making LP for: ', Yname]) % Pick the name of the current variable
-
-    [YY, X] = make_regressors_func(Z,Y_LABEL,p_y,p_x); % Extract regressor matrix
-
-    res_diff = lp_ols_interaction(YY, X, shock_array, H, hStart, "cum", c, R_diff);
-    
-    LPcoeffsAsy_LHS.("diff").("beta").(Yname) = res_diff.irf .* w; % Store shocks coefficients
-    LPcoeffsAsy_LHS.("diff").("se").(Yname)  = res_diff.se_irf .* w; % Store corresponding standard errors
-    
-end
-
-disp('--------- Done estimating asymmetric LPs ---------')
-
-
-% --- Plots ---
-
-irf_diffStruct = LPcoeffsAsy_LHS.("diff").("beta");
-se_diffStruct   = LPcoeffsAsy_LHS.("diff").("se");
-
-
-varNames = fieldnames(irf_diffStruct);
-z = 1;   % 68% CI
-
-for i = 1:numel(varNames)
-    
-    v = varNames{i};
-    
-    irf_diff = irf_diffStruct.(v);   % H x 1
-    se_diff  = se_diffStruct.(v);     % H x 1
-
-    
-    H = size(irf_diff,1);
-    h = (0:H-1)';
-
-    % 68% confidence bands
-    lo_diff = irf_diff - z*se_diff;
-    hi_diff = irf_diff + z*se_diff;
-    
-    figure('Color','w'); hold on; box on;
-
-    c_diff = [0.000 0.500 0.000];  % dark green
-    
-    % CI dashed borders only
-    plot(h, lo_diff, '--', 'Color', c_diff, 'LineWidth', 1.2, ...
-    'HandleVisibility','off');
-    hold on
-    plot(h, hi_diff, '--', 'Color', c_diff, 'LineWidth', 1.2, ...
-    'HandleVisibility','off');
-
-    % IRFs 
-    p1 = plot(h, irf_diff, 'LineWidth',2, 'Color',c_diff);
-
-    yline(0,'k','LineWidth',1,'HandleVisibility','off');
-
-    title(v,'Interpreter','none');
-    xlabel('Horizon');
-    ylabel('Response');
-
-    legend(p1, {'Difference'}, 'Location','best');
-
-    grid on;
-end
