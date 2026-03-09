@@ -1,51 +1,169 @@
-%% Question 2: A toy example
+%% Step 1:
 
-H = 10; % Number of horizons
+data = readtable("qst2_data.xlsx"); % Read data
 
-betas = nan(H+1,1); % To store shock coefficients
-ses   = nan(H+1,1); % To store corresponding standard deviations
 
-T = length(RealRate); % Number of observations
+%% Step 2:
 
-for h = 0:H % Loop over horizons
- 
-    t0 = 2;
-    t1 = T - h;
+prod = 100 .* log(data.OUTNFB ./ data.HOANBS); % (log) labor productivity
 
-    Y = RealRate((t0+h):(t1+h)) - RealRate((t0-1):(t1-1)); % Long differences of 
-    % dependent variable
+pch = 100 .* log(data.HOANBS ./ data.CNP16OV); % (log) per-capita hours
 
-    X = [ones(length(Y),1), rr_shock(t0:t1)]; % Matrix of regressors: constant + 
-    % shock
 
-    % OLS
-    b = (X' * X) \ (X' * Y); % Coefficients 
-    res = Y - X*b; % Residuals
+%% Step 3:
 
-    n = size(X,1);
-    k = size(X,2);
-    s2 = (res' * res) / (n - k);
-    V  = s2 * inv(X' * X);
+p = 4; % Maximum number of lags of controls
 
-    betas(h+1) = b(2); % Pick second coefficient (first is the constant)
-    ses(h+1)   = sqrt(V(2,2)); % Same here
+d_prod = [NaN(1,1); diff(prod)];
+d_pch = [NaN(1,1); diff(pch)];
+X = lagmatrix([d_prod d_pch], 1:p); % Matrix of controls for both steps
+
+
+%% Step 4:
+
+H = 20;
+lpMode = "cum";
+seType = "hac";
+c = 1;
+hStart = 0;
+y = prod;
+S = [d_prod d_pch]; % I want the coefficients of these two variables
+
+res = lp_ols(y, X, S, H, hStart, lpMode, seType, c);
+
+w_1 = res.beta(H+1,1);
+w_2 = res.beta(H+1,2);
+
+lin_comb = w_1 .* d_prod + w_2 .* d_pch; % Resulting linear combination that...
+
+
+%% Step 5:
+
+H = 20;
+lpMode = "cum";
+seType = "hac";
+c = 1;
+hStart = 0;
+S = lin_comb; % Signal of technology shock 
+LHS = [prod pch];
+varNames = {'LaborProd','Hours'};
+
+
+for v = 1:size(LHS,2) % Loop over variables
+
+    res = lp_ols(LHS(:,v), X, S, H, hStart, lpMode, seType, c);
+
+    results.beta.(varNames{v}) = res.beta;
+    results.se.(varNames{v}) = res.se;
+
 end
 
-hgrid = (0:H)';
 
-% 68% bands: +/- 1 * se
-upper68 = betas + ses;
-lower68 = betas - ses;
+%% Step 6:
 
-% Final plot
+horizon = 0:H;
+
 figure;
-plot(hgrid, betas, '-o'); hold on; grid on;
-ci_color = [0.5 0.5 0.5];   % grey (RGB)
-plot(hgrid, upper68, '--', 'Color', ci_color, 'LineWidth', 1.2);
-plot(hgrid, lower68, '--', 'Color', ci_color, 'LineWidth', 1.2);
-yline(0, '-');
-xlabel('Horizon h');
-ylabel('\beta_h');
-title('Local Projection: rr_{t+h} - rr_{t-1} on shock_t (const + shock)');
+for v = 1:length(varNames)
+
+    subplot(2,1,v)
+    hold on
+    
+    % Point estimate
+    beta = results.beta.(varNames{v});
+    se   = results.se.(varNames{v});
+    
+    lo = beta - se;     % 68% band
+    hi = beta + se;
+
+    % --- Shaded confidence band ---
+    patch([horizon fliplr(horizon)], ...
+          [lo' fliplr(hi')], ...
+          'k', ...
+          'FaceAlpha', 0.12, ...
+          'EdgeColor', 'none', ...
+          'HandleVisibility','off');
+
+    % --- Dashed band edges ---
+    plot(horizon, lo, 'k--', 'LineWidth', 1, 'HandleVisibility','off');
+    plot(horizon, hi, 'k--', 'LineWidth', 1, 'HandleVisibility','off');
+
+    % --- IRF line ---
+    plot(horizon, beta, 'k-', 'LineWidth', 2);
+
+    yline(0,'--','HandleVisibility','off')
+
+    title(varNames{v})
+    xlabel('Horizon')
+    ylabel('Response')
+    grid on
+    hold off
+
+end
 
 
+%% Step 7:
+
+H = 20;
+lpMode = "cum";
+seType = "hac";
+c = 1;
+hStart = 0;
+S = d_pch; % Orthogonal to technology shock
+X = [lin_comb lagmatrix([d_prod d_pch], 1:p)]; % New controls --> added 
+% linear combination
+LHS = [prod pch];
+varNames = {'LaborProd','Hours'};
+
+
+for v = 1:size(LHS,2) % Loop over variables
+
+    res = lp_ols(LHS(:,v), X, S, H, hStart, lpMode, seType, c);
+
+    results.beta.(varNames{v}) = res.beta;
+    results.se.(varNames{v}) = res.se;
+
+end
+
+
+% --- Plot ---
+
+horizon = 0:H;
+
+figure;
+for v = 1:length(varNames)
+
+    subplot(2,1,v)
+    hold on
+    
+    % Point estimate
+    beta = results.beta.(varNames{v});
+    se   = results.se.(varNames{v});
+    
+    lo = beta - se;     % 68% band
+    hi = beta + se;
+
+    % --- Shaded confidence band ---
+    patch([horizon fliplr(horizon)], ...
+          [lo' fliplr(hi')], ...
+          'k', ...
+          'FaceAlpha', 0.12, ...
+          'EdgeColor', 'none', ...
+          'HandleVisibility','off');
+
+    % --- Dashed band edges ---
+    plot(horizon, lo, 'k--', 'LineWidth', 1, 'HandleVisibility','off');
+    plot(horizon, hi, 'k--', 'LineWidth', 1, 'HandleVisibility','off');
+
+    % --- IRF line ---
+    plot(horizon, beta, 'k-', 'LineWidth', 2);
+
+    yline(0,'--','HandleVisibility','off')
+
+    title(varNames{v})
+    xlabel('Horizon')
+    ylabel('Response')
+    grid on
+    hold off
+
+end
